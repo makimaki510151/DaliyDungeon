@@ -113,15 +113,18 @@
                 width: 90vw;
                 height: 90vw;
             }
+
             .tpbtn {
                 width: 45px;
                 height: 45px;
                 font-size: 14px;
             }
+
             .btn {
                 padding: 8px 12px;
                 font-size: 14px;
             }
+
             .hint {
                 font-size: 12px;
             }
@@ -148,7 +151,7 @@
                 <button class="tpbtn" data-dir="down" style="grid-area:down">⬇</button>
             </div>
         </div>
-        <div class="hint">移動：WASD / 方向キー / タッチパッド　•　目の前の緑丸 = AP回復 (+15)　•　APが0でゲームオーバー</div>
+        <div class="hint">移動：WASD / 方向キー / タッチパッド　•　目の前の緑丸 = AP回復 (+5~20)　•　APが0でゲームオーバー</div>
     </div>
 
     <script>
@@ -158,7 +161,7 @@
         const TILE = 32;
         const VIEW = 7;
         const MAX_AP = 100;
-        const AP_RECOVERY = 15;
+        const AP_RECOVERY_MIN = 5, AP_RECOVERY_MAX = 20;
         let volume = 0.5;
 
         const COLORS = {
@@ -168,6 +171,9 @@
 
         // 新しい色を追加
         COLORS.PATH_FADE = '#cccccc'; // 通った後のマスの色
+        COLORS.STAIRS = '#663399';
+        COLORS.FLAG_POLE = '#999999';
+        COLORS.FLAG = '#ff9900';
 
         // ====== 乱数（日替わりシード） ======
         function xmur3(str) { let h = 1779033703 ^ str.length; for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; } return function () { h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); return (h ^ (h >>> 16)) >>> 0; } }
@@ -203,6 +209,8 @@
         let rng = makeRNG(seedFor(level));
         // 移動の軌跡を保存する配列
         let path = [];
+        // APアイテムの回復量を保存するオブジェクト
+        let apItems = {};
 
         function seedFor(lv) { const d = new Date(); const yyyy = d.getFullYear(); const mm = String(d.getMonth() + 1).padStart(2, '0'); const dd = String(d.getDate()).padStart(2, '0'); return `${yyyy}${mm}${dd}${String(lv).padStart(2, '0')}`; }
 
@@ -241,10 +249,15 @@
             grid[sy][sx] = START; grid[gy][gx] = GOAL;
 
             let placed = 0; let safety = 0;
+            apItems = {}; // APアイテムの回復量を格納するオブジェクトを初期化
             while (placed < apItemCount && safety < 10000) {
                 safety++;
                 const y = randInt(1, height - 2), x = randInt(1, width - 2);
-                if (grid[y][x] === PATH) { grid[y][x] = AP_ITEM; placed++; }
+                if (grid[y][x] === PATH) {
+                    grid[y][x] = AP_ITEM;
+                    apItems[`${y},${x}`] = randInt(AP_RECOVERY_MIN, AP_RECOVERY_MAX);
+                    placed++;
+                }
             }
 
             return { grid, start: [sy, sx], goal: [gy, gx] };
@@ -326,9 +339,13 @@
             Audio.move();
 
             if (dungeon[ny][nx] === '+') {
-                ap = Math.min(MAX_AP, ap + AP_RECOVERY);
-                dungeon[ny][nx] = '.';
-                Audio.heal();
+                const recoveryAmount = apItems[`${ny},${nx}`];
+                if (recoveryAmount) {
+                    ap = Math.min(MAX_AP, ap + recoveryAmount);
+                    dungeon[ny][nx] = '.';
+                    delete apItems[`${ny},${nx}`]; // 回復量を削除
+                    Audio.heal();
+                }
             }
 
             if (ap <= 0) {
@@ -469,9 +486,37 @@
                         ctx.fillStyle = COLORS.GREEN;
                         ctx.arc(screenX + TILE / 2, screenY + TILE / 2, TILE / 4, 0, Math.PI * 2);
                         ctx.fill();
+
+                        // AP回復量を描画
+                        const recoveryAmount = apItems[`${y},${x}`];
+                        if (recoveryAmount) {
+                            ctx.fillStyle = COLORS.WHITE;
+                            ctx.font = '10px sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.textBaseline = 'middle';
+                            ctx.fillText(recoveryAmount, screenX + TILE / 2, screenY + TILE / 2);
+                        }
+
                     } else if (tile === 'G') {
                         drawRect(screenX, screenY, TILE, TILE, COLORS.LIGHT);
-                        drawText('G', screenX + TILE / 2, screenY + TILE / 2, 24, COLORS.ORANGE);
+                        // 旗を描画
+                        const flagPoleX = screenX + TILE * 0.7;
+                        const flagPoleY = screenY + TILE * 0.2;
+                        const flagPoleHeight = TILE * 0.6;
+                        const flagWidth = TILE * 0.4;
+                        const flagHeight = TILE * 0.3;
+
+                        // 旗竿
+                        drawRect(flagPoleX, flagPoleY, 2, flagPoleHeight, COLORS.FLAG_POLE);
+
+                        // 旗
+                        ctx.beginPath();
+                        ctx.fillStyle = COLORS.FLAG;
+                        ctx.moveTo(flagPoleX, flagPoleY);
+                        ctx.lineTo(flagPoleX - flagWidth, flagPoleY + flagHeight * 0.5);
+                        ctx.lineTo(flagPoleX, flagPoleY + flagHeight);
+                        ctx.closePath();
+                        ctx.fill();
                     }
 
                     // タイルの色に応じてグリッドの色を変更
@@ -519,10 +564,10 @@
                 if (screenX >= 0 && screenX < SCREEN_W && screenY >= 0 && screenY < SCREEN_H) {
                     // ゴールとスタート地点は軌跡を描画しない
                     if (tile !== 'G' && tile !== 'S') {
-                         ctx.beginPath();
-                         ctx.fillStyle = '#dddddd'; // さらに薄い色に変更
-                         ctx.arc(screenX + TILE / 2, screenY + TILE / 2, TILE / 8, 0, Math.PI * 2); // 小さな点を描画
-                         ctx.fill();
+                        ctx.beginPath();
+                        ctx.fillStyle = '#dddddd'; // さらに薄い色に変更
+                        ctx.arc(screenX + TILE / 2, screenY + TILE / 2, TILE / 8, 0, Math.PI * 2); // 小さな点を描画
+                        ctx.fill();
                     }
                 }
             }
