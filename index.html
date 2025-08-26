@@ -535,6 +535,9 @@
             dungeon = gen.grid; startPos = gen.start; goalPos = gen.goal;
             player.y = startPos[0]; player.x = startPos[1];
 
+            // 足跡をリセット
+            path = [];
+
             // 次の階層のマップデータを読み込む、なければ初期化
             if (!exploredDungeons[level]) {
                 exploredDungeons[level] = {
