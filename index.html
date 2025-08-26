@@ -410,7 +410,19 @@
         startBtn.addEventListener('click', () => { Audio.button(); beginGame(); });
         restartBtn.addEventListener('click', () => { Audio.button(); resetGame(); beginGame(); });
 
-        function changeState(s) { state = s; restartBtn.style.display = (s === STATE.GAMEOVER) ? 'inline-block' : 'none'; }
+        function changeState(s) {
+            state = s;
+            if (s === STATE.MENU) {
+                startBtn.style.display = 'inline-block';
+                restartBtn.style.display = 'none';
+            } else if (s === STATE.GAMEOVER) {
+                startBtn.style.display = 'none';
+                restartBtn.style.display = 'inline-block';
+            } else { // PLAY
+                startBtn.style.display = 'none';
+                restartBtn.style.display = 'none';
+            }
+        }
 
         function beginGame() {
             level = (state === STATE.GAMEOVER) ? 1 : level;
