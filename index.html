@@ -139,8 +139,6 @@
             <div class="btnbar">
                 <button class="btn" id="startBtn">▶ ダンジョンに潜る</button>
                 <button class="btn" id="restartBtn" style="display:none">↻ もう一度始める</button>
-                <button class="btn" id="mapBtn" style="display:none">🗺 マップを開く</button>
-                <button class="btn" id="returnBtn" style="display:none">◀ 戻る</button>
             </div>
             <div class="volume">
                 <label for="volRange">🔊 音量</label>
@@ -200,7 +198,7 @@
         ctx.imageSmoothingEnabled = false;
 
         // ====== ゲーム状態 ======
-        const STATE = { MENU: 'menu', PLAY: 'play', GAMEOVER: 'gameover', MAP: 'map' }; // MAP状態を追加
+        const STATE = { MENU: 'menu', PLAY: 'play', GAMEOVER: 'gameover' };
         let state = STATE.MENU;
         let dungeon = null;
         let startPos = null;
@@ -211,38 +209,8 @@
         let rng = makeRNG(seedFor(level));
         // 移動の軌跡を保存する配列
         let path = [];
-        // 探索済みマスを階層ごとに保存するオブジェクト
-        let exploredDungeons = {};
         // APアイテムの回復量を保存するオブジェクト
         let apItems = {};
-
-        // ====== データ保存/読み込み ======
-        const STORAGE_KEY = 'dungeon_data';
-
-        function saveGameData() {
-            const data = {
-                seed: seedFor(1),
-                exploredDungeons: exploredDungeons
-            };
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        }
-
-        function loadGameData() {
-            const todaySeed = seedFor(1);
-            const savedData = localStorage.getItem(STORAGE_KEY);
-
-            if (savedData) {
-                const data = JSON.parse(savedData);
-                if (data.seed === todaySeed) {
-                    exploredDungeons = data.exploredDungeons;
-                    console.log("マップデータを読み込みました。");
-                    return true;
-                }
-            }
-            console.log("日付が変わったため、マップデータをリセットします。");
-            resetGame();
-            return false;
-        }
 
         function seedFor(lv) { const d = new Date(); const yyyy = d.getFullYear(); const mm = String(d.getMonth() + 1).padStart(2, '0'); const dd = String(d.getDate()).padStart(2, '0'); return `${yyyy}${mm}${dd}${String(lv).padStart(2, '0')}`; }
 
@@ -342,9 +310,6 @@
 
             // === ゴールへ入る処理（先に判定） ===
             if (ny === goalPos[0] && nx === goalPos[1]) {
-                // ゴールに到達したら、discoveredTilesにゴールを追加
-                const goalKey = `${goalPos[0]},${goalPos[1]}`;
-                discoveredTiles[goalKey] = 'G';
                 // プレイヤーをゴール位置に移動（見た目として）
                 player.x = nx;
                 player.y = ny;
@@ -356,12 +321,13 @@
                 ignorePressUntilRelease = true;
                 isTransitioning = true;
 
-                saveGameData(); // ゴール到達時にデータを保存
+                // 少し演出の後に次階へ移行
                 setTimeout(() => {
                     nextLevel();
+                    // 次階で即動かないようにするため、ignorePressUntilRelease は指が離されるまで true のままにする
                     isTransitioning = false;
                 }, 250);
-                return;
+                return; // 突き抜け防止：ここで処理終了
             }
 
             // === 通常移動 ===
@@ -370,9 +336,6 @@
             player.x = nx;
             player.y = ny;
             ap -= 1;
-            // 通った道を記録（すべてのパスを記録）
-            const tileKey = `${player.y},${player.x}`;
-            discoveredTiles[tileKey] = dungeon[player.y][player.x];
             Audio.move();
 
             if (dungeon[ny][nx] === '+') {
@@ -380,11 +343,7 @@
                 if (recoveryAmount) {
                     ap = Math.min(MAX_AP, ap + recoveryAmount);
                     dungeon[ny][nx] = '.';
-                    const tileKey = `${ny},${nx}`;
-                    discoveredTiles[tileKey] = '.';
-                    delete apItems[tileKey];
-                    // 階層のアイテム情報を更新
-                    delete exploredDungeons[level].apItems[tileKey];
+                    delete apItems[`${ny},${nx}`]; // 回復量を削除
                     Audio.heal();
                 }
             }
@@ -448,111 +407,50 @@
         // ====== 画面遷移 ======
         const startBtn = document.getElementById('startBtn');
         const restartBtn = document.getElementById('restartBtn');
-        const mapBtn = document.getElementById('mapBtn'); // 追加
-        const returnBtn = document.getElementById('returnBtn'); // 追加
-
         startBtn.addEventListener('click', () => { Audio.button(); beginGame(); });
-        restartBtn.addEventListener('click', () => {
-            Audio.button();
-            // プレイヤーの位置とAPをリセット
-            level = 1;
-            ap = MAX_AP;
-            // 足跡だけをリセット
-            path = [];
-            beginGame();
-        });
+        restartBtn.addEventListener('click', () => { Audio.button(); resetGame(); beginGame(); });
 
-        // マップボタンの挙動
-        mapBtn.addEventListener('click', () => { Audio.button(); changeState(STATE.MAP); }); // 追加
-        returnBtn.addEventListener('click', () => { Audio.button(); changeState(STATE.PLAY); }); // 追加
         function changeState(s) {
             state = s;
-            // すべてのボタンを非表示に
-            startBtn.style.display = 'none';
-            restartBtn.style.display = 'none';
-            mapBtn.style.display = 'none';
-            returnBtn.style.display = 'none';
-
             if (s === STATE.MENU) {
                 startBtn.style.display = 'inline-block';
+                restartBtn.style.display = 'none';
             } else if (s === STATE.GAMEOVER) {
+                startBtn.style.display = 'none';
                 restartBtn.style.display = 'inline-block';
-            } else if (s === STATE.PLAY) {
-                mapBtn.style.display = 'inline-block'; // PLAY時にマップボタンを表示
-            } else if (s === STATE.MAP) { // 追加
-                returnBtn.style.display = 'inline-block'; // MAP時に戻るボタンを表示
+            } else { // PLAY
+                startBtn.style.display = 'none';
+                restartBtn.style.display = 'none';
             }
         }
 
         function beginGame() {
-            // 日付が変わった場合はデータが自動でリセットされる
-            loadGameData();
-
-            // ゲームオーバーからの再開時はレベルを1にリセット
-            if (state === STATE.GAMEOVER) {
-                level = 1;
-                ap = MAX_AP;
-                path = []; // 足跡をリセット
-            }
-
+            level = (state === STATE.GAMEOVER) ? 1 : level;
             const seed = seedFor(level);
             const gen = generateDungeon(DUNGEON_W, DUNGEON_H, 15, 10, seed);
             dungeon = gen.grid; startPos = gen.start; goalPos = gen.goal;
             player.y = startPos[0]; player.x = startPos[1];
-
-            // 現在の階層のマップデータを読み込む、なければ初期化
-            if (!exploredDungeons[level]) {
-                exploredDungeons[level] = {
-                    tiles: {},
-                    apItems: { ...apItems }
-                };
-            }
-
-            // プレイヤーが探索中のマップデータを切り替え
-            discoveredTiles = exploredDungeons[level].tiles;
-
+            if (state !== STATE.GAMEOVER) ap = MAX_AP;
             changeState(STATE.PLAY);
+            // 初期化：押しっぱなしガード解除
             stopHold();
             ignorePressUntilRelease = false;
             isTransitioning = false;
-        }
-
-        function resetGame() {
-            level = 1;
-            ap = MAX_AP;
-            exploredDungeons = {};
-            // localStorageもクリア
-            localStorage.removeItem(STORAGE_KEY);
+            path = []; // ゲーム開始時に軌跡をリセット
         }
 
         function nextLevel() {
-            // 現在の階層のAPアイテム情報を保存
-            exploredDungeons[level].apItems = apItems;
-
             level += 1;
             const seed = seedFor(level);
             const gen = generateDungeon(DUNGEON_W, DUNGEON_H, 15, 10, seed);
             dungeon = gen.grid; startPos = gen.start; goalPos = gen.goal;
             player.y = startPos[0]; player.x = startPos[1];
-
-            // 足跡をリセット
-            path = [];
-
-            // 次の階層のマップデータを読み込む、なければ初期化
-            if (!exploredDungeons[level]) {
-                exploredDungeons[level] = {
-                    tiles: {},
-                    apItems: { ...apItems }
-                };
-            } else {
-                // 既に探索済みの階層ならAPアイテム情報を復元
-                apItems = { ...exploredDungeons[level].apItems };
-            }
-
-            discoveredTiles = exploredDungeons[level].tiles;
+            // 次階に来た直後は押し直しを要求する（ignore は遷移処理で制御）
             stopHold();
-            saveGameData(); // 階層遷移時にデータを保存
+            path = []; // 階層遷移時に軌跡をリセット
         }
+
+        function resetGame() { level = 1; ap = MAX_AP; }
 
         // ====== 描画 ======
         function drawRect(x, y, w, h, fill) { ctx.fillStyle = fill; ctx.fillRect(x, y, w, h); }
@@ -571,68 +469,6 @@
                 drawRect(0, 0, SCREEN_W, SCREEN_H, COLORS.LIGHT);
                 drawText('GAME OVER', SCREEN_W / 2, 150, 56, COLORS.RED);
                 drawText(`潜った階層: ${level}`, SCREEN_W / 2, 250, 24, COLORS.BLACK);
-                return;
-            }
-
-            if (state === STATE.MAP) {
-                // マップ表示用の計算
-                const mapTileSize = Math.floor(SCREEN_W / DUNGEON_W);
-                const mapOffsetX = (SCREEN_W - DUNGEON_W * mapTileSize) / 2;
-                const mapOffsetY = (SCREEN_H - DUNGEON_H * mapTileSize) / 2;
-
-                drawRect(0, 0, SCREEN_W, SCREEN_H, COLORS.DARK); // 背景
-
-                // 全てのタイルを描画
-                for (let y = 0; y < DUNGEON_H; y++) {
-                    for (let x = 0; x < DUNGEON_W; x++) {
-                        const tileKey = `${y},${x}`;
-                        const screenX = mapOffsetX + x * mapTileSize;
-                        const screenY = mapOffsetY + y * mapTileSize;
-
-                        const tile = dungeon[y][x];
-
-                        // プレイヤーが訪れたマスと、触れたアイテム・ゴール、スタート地点のみ描画
-                        if (discoveredTiles[tileKey]) {
-                            if (tile === '#' || tile === 'G' || tile === 'S') {
-                                // 何も描画しない（壁、ゴール、スタートは描画しない）
-                            } else if (tile === '.') {
-                                drawRect(screenX, screenY, mapTileSize, mapTileSize, COLORS.PATH_FADE); // 通った道は薄い色
-                            } else if (tile === '+') {
-                                const tileKey = `${y},${x}`;
-                                if (exploredDungeons[level].apItems[tileKey]) {
-                                    drawRect(screenX, screenY, mapTileSize, mapTileSize, COLORS.PATH_FADE);
-                                    ctx.beginPath();
-                                    // ここを元の回復アイテムと同じ色に設定
-                                    ctx.fillStyle = COLORS.GREEN;
-                                    ctx.arc(screenX + mapTileSize / 2, screenY + mapTileSize / 2, mapTileSize / 4, 0, Math.PI * 2);
-                                    ctx.fill();
-                                }
-                            }
-                        } else {
-                            // 未探索の場所は真っ黒
-                            drawRect(screenX, screenY, mapTileSize, mapTileSize, COLORS.BLACK);
-                        }
-                    }
-                }
-
-                // プレイヤーの位置にマーク
-                const playerScreenX = mapOffsetX + player.x * mapTileSize;
-                const playerScreenY = mapOffsetY + player.y * mapTileSize;
-                drawText('P', playerScreenX + mapTileSize / 2, playerScreenY + mapTileSize / 2, mapTileSize * 0.7, COLORS.WHITE);
-
-                // スタート地点にマーク
-                const startScreenX = mapOffsetX + startPos[1] * mapTileSize;
-                const startScreenY = mapOffsetY + startPos[0] * mapTileSize;
-                drawText('S', startScreenX + mapTileSize / 2, startScreenY + mapTileSize / 2, mapTileSize * 0.7, COLORS.GREEN);
-
-                // 触れたゴール地点にマーク
-                const goalKey = `${goalPos[0]},${goalPos[1]}`;
-                if (discoveredTiles[goalKey]) {
-                    const goalScreenX = mapOffsetX + goalPos[1] * mapTileSize;
-                    const goalScreenY = mapOffsetY + goalPos[0] * mapTileSize;
-                    drawText('G', goalScreenX + mapTileSize / 2, goalScreenY + mapTileSize / 2, mapTileSize * 0.7, COLORS.AQUA);
-                }
-
                 return;
             }
 
