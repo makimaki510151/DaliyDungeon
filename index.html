@@ -452,7 +452,15 @@
         const returnBtn = document.getElementById('returnBtn'); // 追加
 
         startBtn.addEventListener('click', () => { Audio.button(); beginGame(); });
-        restartBtn.addEventListener('click', () => { Audio.button(); resetGame(); beginGame(); });
+        restartBtn.addEventListener('click', () => {
+            Audio.button();
+            // プレイヤーの位置とAPをリセット
+            level = 1;
+            ap = MAX_AP;
+            // 足跡だけをリセット
+            path = [];
+            beginGame();
+        });
 
         // マップボタンの挙動
         mapBtn.addEventListener('click', () => { Audio.button(); changeState(STATE.MAP); }); // 追加
