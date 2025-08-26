@@ -1,0 +1,372 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>毎日ダンジョン（Web版）</title>
+    <style>
+        :root {
+            --bg: #f0f0f0;
+            --dark: #646464;
+            --light: #f4f4f4;
+            --white: #ffffff;
+        }
+
+        html,
+        body {
+            height: 100%;
+            margin: 0;
+            background: var(--bg);
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+        }
+
+        .wrap {
+            display: grid;
+            place-items: center;
+            height: 100%;
+            gap: 16px;
+        }
+
+        canvas {
+            background: #000;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, .15);
+            touch-action: none;
+        }
+
+        .hint {
+            color: #444;
+            font-size: 14px;
+            text-align: center;
+        }
+
+        .btnbar {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            appearance: none;
+            border: none;
+            padding: 10px 14px;
+            border-radius: 12px;
+            background: #e8fff7;
+            cursor: pointer;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, .08) inset;
+        }
+
+        .btn:hover {
+            filter: brightness(1.05);
+        }
+
+        .control-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            align-items: center;
+        }
+
+        .volume {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .touchpad {
+            display: grid;
+            grid-template-areas:
+                ". up ." "left center right" ". down .";
+            gap: 10px;
+        }
+
+        .tpbtn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: none;
+            background: #dbeafe;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+            font-size: 18px;
+        }
+
+        .tpbtn:active {
+            background: #93c5fd;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrap">
+        <canvas id="game" width="600" height="600" aria-label="毎日ダンジョン"></canvas>
+        <div class="control-panel">
+            <div class="btnbar">
+                <button class="btn" id="startBtn">▶ ダンジョンに潜る</button>
+                <button class="btn" id="restartBtn" style="display:none">↻ もう一度始める</button>
+            </div>
+            <div class="volume">
+                <label for="volRange">🔊 音量</label>
+                <input type="range" id="volRange" min="0" max="1" step="0.05" value="0.5">
+            </div>
+            <div class="touchpad">
+                <button class="tpbtn" data-dir="up" style="grid-area:up">⬆</button>
+                <button class="tpbtn" data-dir="left" style="grid-area:left">⬅</button>
+                <button class="tpbtn" data-dir="right" style="grid-area:right">➡</button>
+                <button class="tpbtn" data-dir="down" style="grid-area:down">⬇</button>
+            </div>
+        </div>
+        <div class="hint">移動：WASD / 方向キー / タッチパッド　•　目の前の緑丸 = AP回復 (+15)　•　APが0でゲームオーバー</div>
+    </div>
+
+    <script>
+        // ====== 基本設定 ======
+        const SCREEN_W = 600, SCREEN_H = 600;
+        const DUNGEON_W = 50, DUNGEON_H = 50;
+        const TILE = 40;
+        const VIEW = 7;
+        const MAX_AP = 100;
+        const AP_RECOVERY = 15;
+        let volume = 0.5;
+
+        const COLORS = {
+            WHITE: '#ffffff', BLACK: '#000000', ORANGE: '#ffa500', GREEN: '#00c800',
+            RED: '#ff0000', LIGHT: '#f0f0f0', DARK: '#646464', MEDIUMSPRINGGREEN: '#00fa9a', AQUA: '#7fffd4'
+        };
+
+        // ====== 乱数（日替わりシード） ======
+        function xmur3(str) { let h = 1779033703 ^ str.length; for (let i = 0; i < str.length; i++) { h = Math.imul(h ^ str.charCodeAt(i), 3432918353); h = h << 13 | h >>> 19; } return function () { h = Math.imul(h ^ (h >>> 16), 2246822507); h = Math.imul(h ^ (h >>> 13), 3266489909); return (h ^ (h >>> 16)) >>> 0; } }
+        function mulberry32(a) { return function () { let t = a += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; } }
+        function makeRNG(seedStr) { const seed = xmur3(seedStr)(); return mulberry32(seed); }
+
+        // ====== オーディオ ======
+        const Audio = {
+            ctx: null,
+            ensure() { if (!this.ctx) { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); } },
+            beep(freq = 440, dur = 0.1, type = 'sine', vol = 0.5, when = 0) { this.ensure(); const t = this.ctx.currentTime + when; const o = this.ctx.createOscillator(); const g = this.ctx.createGain(); o.type = type; o.frequency.value = freq; o.connect(g); g.connect(this.ctx.destination); g.gain.value = vol * volume; o.start(t); o.stop(t + dur); },
+            noise(dur = 0.05, vol = 0.2) { this.ensure(); const sr = this.ctx.sampleRate; const len = Math.floor(sr * dur); const buffer = this.ctx.createBuffer(1, len, sr); const data = buffer.getChannelData(0); for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1; const src = this.ctx.createBufferSource(); const g = this.ctx.createGain(); src.buffer = buffer; src.connect(g); g.connect(this.ctx.destination); g.gain.value = vol * volume; src.start(); },
+            move() { this.noise(0.05, 0.10); },
+            heal() { this.beep(1200, 0.1, 'sine', 0.8); },
+            goal() { [880, 1047, 1319, 1568].forEach((f, i) => this.beep(f, 0.1, 'sine', 0.5, i * 0.1)); },
+            button() { this.noise(0.05, 0.2); }
+        };
+
+        // ====== キャンバス準備 ======
+        const canvas = document.getElementById('game');
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+
+        // ====== ゲーム状態 ======
+        const STATE = { MENU: 'menu', PLAY: 'play', GAMEOVER: 'gameover' };
+        let state = STATE.MENU;
+        let dungeon = null;
+        let startPos = null;
+        let goalPos = null;
+        let player = { y: 0, x: 0 };
+        let ap = MAX_AP;
+        let level = 1;
+        let rng = makeRNG(seedFor(level));
+
+        function seedFor(lv) { const d = new Date(); const yyyy = d.getFullYear(); const mm = String(d.getMonth() + 1).padStart(2, '0'); const dd = String(d.getDate()).padStart(2, '0'); return `${yyyy}${mm}${dd}${String(lv).padStart(2, '0')}`; }
+
+        // ====== ダンジョン生成 ======
+        function generateDungeon(width, height, numRooms = 15, apItemCount = 20, seedStr = null) {
+            rng = makeRNG(seedStr || 'seed');
+            const WALL = '#', PATH = '.', START = 'S', GOAL = 'G', AP_ITEM = '+';
+            const grid = Array.from({ length: height }, () => Array.from({ length: width }, () => WALL));
+            const rooms = [];
+
+            const randInt = (min, max) => Math.floor(rng() * (max - min + 1)) + min;
+
+            for (let i = 0; i < numRooms; i++) {
+                const rw = randInt(5, 10), rh = randInt(5, 10);
+                const x = randInt(1, width - rw - 1), y = randInt(1, height - rh - 1);
+                for (let yy = y; yy < y + rh; yy++) for (let xx = x; xx < x + rw; xx++) grid[yy][xx] = PATH;
+                rooms.push({ x, y, w: rw, h: rh });
+            }
+            rooms.sort(() => rng() - 0.5);
+
+            const carveLine = (x1, y1, x2, y2) => {
+                if (rng() < 0.5) { while (x1 !== x2) { grid[y1][x1] = PATH; x1 += (x1 < x2 ? 1 : -1); } while (y1 !== y2) { grid[y1][x1] = PATH; y1 += (y1 < y2 ? 1 : -1); } }
+                else { while (y1 !== y2) { grid[y1][x1] = PATH; y1 += (y1 < y2 ? 1 : -1); } while (x1 !== x2) { grid[y1][x1] = PATH; x1 += (x1 < x2 ? 1 : -1); } }
+            };
+
+            for (let i = 0; i < rooms.length - 1; i++) {
+                const a = rooms[i], b = rooms[i + 1];
+                const ax = a.x + (a.w >> 1), ay = a.y + (a.h >> 1);
+                const bx = b.x + (b.w >> 1), by = b.y + (b.h >> 1);
+                carveLine(ax, ay, bx, by);
+            }
+
+            const sRoom = rooms[0], gRoom = rooms[rooms.length - 1];
+            const sy = sRoom.y + (sRoom.h >> 1), sx = sRoom.x + (sRoom.w >> 1);
+            const gy = gRoom.y + (gRoom.h >> 1), gx = gRoom.x + (gRoom.w >> 1);
+            grid[sy][sx] = START; grid[gy][gx] = GOAL;
+
+            let placed = 0; let safety = 0;
+            while (placed < apItemCount && safety < 10000) {
+                safety++;
+                const y = randInt(1, height - 2), x = randInt(1, width - 2);
+                if (grid[y][x] === PATH) { grid[y][x] = AP_ITEM; placed++; }
+            }
+
+            return { grid, start: [sy, sx], goal: [gy, gx] };
+        }
+
+        // ====== 移動処理 ======
+        function tryMove(dx, dy) {
+            if (state !== STATE.PLAY) return;
+            const nx = player.x + dx;
+            const ny = player.y + dy;
+            if (nx >= 0 && nx < DUNGEON_W && ny >= 0 && ny < DUNGEON_H) {
+                if (dungeon[ny][nx] !== '#') {
+                    player.x = nx; player.y = ny;
+                    ap -= 1; Audio.move();
+                    if (dungeon[ny][nx] === '+') {
+                        ap = Math.min(MAX_AP, ap + AP_RECOVERY);
+                        dungeon[ny][nx] = '.'; Audio.heal();
+                    }
+                    if (ap <= 0) { changeState(STATE.GAMEOVER); return; }
+                    if (ny === goalPos[0] && nx === goalPos[1]) { Audio.goal(); setTimeout(() => nextLevel(), 180); }
+                }
+            }
+        }
+
+        // ====== 入力 ======
+        window.addEventListener('keydown', (e) => {
+            if (['w', 'W', 'ArrowUp'].includes(e.key)) tryMove(0, -1);
+            else if (['s', 'S', 'ArrowDown'].includes(e.key)) tryMove(0, 1);
+            else if (['a', 'A', 'ArrowLeft'].includes(e.key)) tryMove(-1, 0);
+            else if (['d', 'D', 'ArrowRight'].includes(e.key)) tryMove(1, 0);
+        });
+
+        document.querySelectorAll('.tpbtn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const dir = btn.dataset.dir;
+                if (dir === 'up') tryMove(0, -1);
+                else if (dir === 'down') tryMove(0, 1);
+                else if (dir === 'left') tryMove(-1, 0);
+                else if (dir === 'right') tryMove(1, 0);
+            });
+        });
+
+        // 音量バー
+        document.getElementById('volRange').addEventListener('input', (e) => {
+            volume = parseFloat(e.target.value);
+        });
+
+        // ====== 画面遷移 ======
+        const startBtn = document.getElementById('startBtn');
+        const restartBtn = document.getElementById('restartBtn');
+        startBtn.addEventListener('click', () => { Audio.button(); beginGame(); });
+        restartBtn.addEventListener('click', () => { Audio.button(); resetGame(); beginGame(); });
+
+        function changeState(s) { state = s; restartBtn.style.display = (s === STATE.GAMEOVER) ? 'inline-block' : 'none'; }
+
+        function beginGame() {
+            level = (state === STATE.GAMEOVER) ? 1 : level;
+            const seed = seedFor(level);
+            const gen = generateDungeon(DUNGEON_W, DUNGEON_H, 15, 10, seed);
+            dungeon = gen.grid; startPos = gen.start; goalPos = gen.goal;
+            player.y = startPos[0]; player.x = startPos[1];
+            if (state !== STATE.GAMEOVER) ap = MAX_AP;
+            changeState(STATE.PLAY);
+        }
+
+        function nextLevel() {
+            level += 1;
+            const seed = seedFor(level);
+            const gen = generateDungeon(DUNGEON_W, DUNGEON_H, 15, 10, seed);
+            dungeon = gen.grid; startPos = gen.start; goalPos = gen.goal;
+            player.y = startPos[0]; player.x = startPos[1];
+        }
+
+        function resetGame() { level = 1; ap = MAX_AP; }
+
+        // ====== 描画 ======
+        function drawRect(x, y, w, h, fill) { ctx.fillStyle = fill; ctx.fillRect(x, y, w, h); }
+        function drawText(text, x, y, size = 30, color = '#000', align = 'center') { ctx.fillStyle = color; ctx.font = `${size}px sans-serif`; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(text, x, y); }
+
+        function render() {
+            ctx.clearRect(0, 0, SCREEN_W, SCREEN_H);
+
+            if (state === STATE.MENU) {
+                drawRect(0, 0, SCREEN_W, SCREEN_H, COLORS.LIGHT);
+                drawText('毎日ダンジョン', SCREEN_W / 2, 200, 70, COLORS.BLACK);
+                return;
+            }
+
+            if (state === STATE.GAMEOVER) {
+                drawRect(0, 0, SCREEN_W, SCREEN_H, COLORS.LIGHT);
+                drawText('GAME OVER', SCREEN_W / 2, 150, 70, COLORS.RED);
+                drawText(`潜った階層: ${level}`, SCREEN_W / 2, 250, 30, COLORS.BLACK);
+                return;
+            }
+
+            drawRect(0, 0, SCREEN_W, SCREEN_H, COLORS.BLACK);
+
+            const startX = Math.max(0, player.x - VIEW);
+            const endX = Math.min(DUNGEON_W, player.x + VIEW + 1);
+            const startY = Math.max(0, player.y - VIEW);
+            const endY = Math.min(DUNGEON_H, player.y + VIEW + 1);
+
+            for (let y = startY; y < endY; y++) {
+                for (let x = startX; x < endX; x++) {
+                    const screenX = (x - player.x + VIEW) * TILE;
+                    const screenY = (y - player.y + VIEW) * TILE;
+                    const tile = dungeon[y][x];
+                    if (tile === '#') drawRect(screenX, screenY, TILE, TILE, COLORS.DARK);
+                    else if (tile === '.') drawRect(screenX, screenY, TILE, TILE, COLORS.LIGHT);
+                    else if (tile === '+') {
+                        drawRect(screenX, screenY, TILE, TILE, COLORS.LIGHT);
+                        ctx.beginPath(); ctx.fillStyle = COLORS.GREEN; ctx.arc(screenX + TILE / 2, screenY + TILE / 2, TILE / 4, 0, Math.PI * 2); ctx.fill();
+                    }
+                    else if (tile === 'G') {
+                        drawRect(screenX, screenY, TILE, TILE, COLORS.LIGHT);
+                        drawText('G', screenX + TILE / 2, screenY + TILE / 2, 30, COLORS.ORANGE);
+                    }
+                }
+            }
+
+
+            // プレイヤー
+            const px = VIEW * TILE, py = VIEW * TILE;
+            drawText('P', px + TILE / 2, py + TILE / 2, 30, COLORS.RED);
+
+
+            // スタート地点
+            if (player.y === startPos[0] && player.x === startPos[1]) {
+                drawText('S', px + TILE / 2, py + TILE / 2, 30, COLORS.GREEN);
+            } else {
+                const sx = (startPos[1] - player.x + VIEW) * TILE;
+                const sy = (startPos[0] - player.y + VIEW) * TILE;
+                drawText('S', sx + TILE / 2, sy + TILE / 2, 30, COLORS.GREEN);
+            }
+
+
+            // APバー
+            const barW = 150, barH = 20, barX = SCREEN_W - barW - 20, barY = 20;
+            drawRect(barX, barY, barW, barH, COLORS.DARK);
+            const ratio = Math.max(0, ap) / MAX_AP;
+            drawRect(barX, barY, barW * ratio, barH, COLORS.GREEN);
+            drawText(`AP: ${ap}/${MAX_AP}`, barX - 70, barY + barH / 2, 16, COLORS.WHITE, 'right');
+        }
+
+
+        // ====== メインループ ======
+        function loop() { render(); requestAnimationFrame(loop); }
+        loop();
+
+
+        // 初期UI
+        function showMenu() { changeState(STATE.MENU); }
+        showMenu();
+
+
+    </script>
+</body>
+
+</html>
