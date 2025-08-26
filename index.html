@@ -35,8 +35,8 @@
             border-radius: 16px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, .15);
             touch-action: none;
-            width: 600px;
-            height: 600px;
+            width: 480px;
+            height: 480px;
             max-width: 100%;
         }
 
@@ -98,7 +98,7 @@
             background: #dbeafe;
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
             font-size: 18px;
-            touch-action: none; /* 重要: 指の動作を阻害 */
+            touch-action: none;
             user-select: none;
             -webkit-user-select: none;
         }
@@ -131,7 +131,7 @@
 
 <body>
     <div class="wrap">
-        <canvas id="game" width="600" height="600" aria-label="毎日ダンジョン"></canvas>
+        <canvas id="game" width="480" height="480" aria-label="毎日ダンジョン"></canvas>
         <div class="control-panel">
             <div class="btnbar">
                 <button class="btn" id="startBtn">▶ ダンジョンに潜る</button>
@@ -153,9 +153,9 @@
 
     <script>
         // ====== 基本設定 ======
-        const SCREEN_W = 600, SCREEN_H = 600;
+        const SCREEN_W = 480, SCREEN_H = 480;
         const DUNGEON_W = 50, DUNGEON_H = 50;
-        const TILE = 40;
+        const TILE = 32;
         const VIEW = 7;
         const MAX_AP = 100;
         const AP_RECOVERY = 15;
@@ -423,14 +423,14 @@
 
             if (state === STATE.MENU) {
                 drawRect(0, 0, SCREEN_W, SCREEN_H, COLORS.LIGHT);
-                drawText('毎日ダンジョン', SCREEN_W / 2, 200, 70, COLORS.BLACK);
+                drawText('毎日ダンジョン', SCREEN_W / 2, 200, 56, COLORS.BLACK);
                 return;
             }
 
             if (state === STATE.GAMEOVER) {
                 drawRect(0, 0, SCREEN_W, SCREEN_H, COLORS.LIGHT);
-                drawText('GAME OVER', SCREEN_W / 2, 150, 70, COLORS.RED);
-                drawText(`潜った階層: ${level}`, SCREEN_W / 2, 250, 30, COLORS.BLACK);
+                drawText('GAME OVER', SCREEN_W / 2, 150, 56, COLORS.RED);
+                drawText(`潜った階層: ${level}`, SCREEN_W / 2, 250, 24, COLORS.BLACK);
                 return;
             }
 
@@ -454,30 +454,30 @@
                     }
                     else if (tile === 'G') {
                         drawRect(screenX, screenY, TILE, TILE, COLORS.LIGHT);
-                        drawText('G', screenX + TILE / 2, screenY + TILE / 2, 30, COLORS.ORANGE);
+                        drawText('G', screenX + TILE / 2, screenY + TILE / 2, 24, COLORS.ORANGE);
                     }
                 }
             }
 
             // プレイヤー
             const px = VIEW * TILE, py = VIEW * TILE;
-            drawText('P', px + TILE / 2, py + TILE / 2, 30, COLORS.RED);
+            drawText('P', px + TILE / 2, py + TILE / 2, 24, COLORS.RED);
 
             // スタート地点
             if (player.y === startPos[0] && player.x === startPos[1]) {
-                drawText('S', px + TILE / 2, py + TILE / 2, 30, COLORS.GREEN);
+                drawText('S', px + TILE / 2, py + TILE / 2, 24, COLORS.GREEN);
             } else {
                 const sx = (startPos[1] - player.x + VIEW) * TILE;
                 const sy = (startPos[0] - player.y + VIEW) * TILE;
-                drawText('S', sx + TILE / 2, sy + TILE / 2, 30, COLORS.GREEN);
+                drawText('S', sx + TILE / 2, sy + TILE / 2, 24, COLORS.GREEN);
             }
 
             // APバー
-            const barW = 150, barH = 20, barX = SCREEN_W - barW - 20, barY = 20;
+            const barW = 120, barH = 16, barX = SCREEN_W - barW - 16, barY = 16;
             drawRect(barX, barY, barW, barH, COLORS.DARK);
             const ratio = Math.max(0, ap) / MAX_AP;
             drawRect(barX, barY, barW * ratio, barH, COLORS.GREEN);
-            drawText(`AP: ${ap}/${MAX_AP}`, barX - 70, barY + barH / 2, 16, COLORS.WHITE, 'right');
+            drawText(`AP: ${ap}/${MAX_AP}`, barX - 56, barY + barH / 2, 13, COLORS.WHITE, 'right');
         }
 
         // ====== メインループ ======
