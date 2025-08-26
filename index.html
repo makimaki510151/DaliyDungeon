@@ -26,6 +26,8 @@
             place-items: center;
             height: 100%;
             gap: 16px;
+            padding: 16px;
+            box-sizing: border-box;
         }
 
         canvas {
@@ -33,6 +35,9 @@
             border-radius: 16px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, .15);
             touch-action: none;
+            width: 600px;
+            height: 600px;
+            max-width: 100%;
         }
 
         .hint {
@@ -82,6 +87,7 @@
             grid-template-areas:
                 ". up ." "left center right" ". down .";
             gap: 10px;
+            touch-action: none;
         }
 
         .tpbtn {
@@ -92,10 +98,33 @@
             background: #dbeafe;
             box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
             font-size: 18px;
+            touch-action: none; /* 重要: 指の動作を阻害 */
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         .tpbtn:active {
             background: #93c5fd;
+        }
+
+        /* スマホ対応（幅600px以下のときUIを縮小） */
+        @media (max-width: 600px) {
+            canvas {
+                width: 90vw;
+                height: 90vw;
+            }
+            .tpbtn {
+                width: 45px;
+                height: 45px;
+                font-size: 14px;
+            }
+            .btn {
+                padding: 8px 12px;
+                font-size: 14px;
+            }
+            .hint {
+                font-size: 12px;
+            }
         }
     </style>
 </head>
@@ -217,25 +246,92 @@
         }
 
         // ====== 移動処理 ======
+        // 制御フラグ（突き抜け・長押しの再開制御）
+        let holdTimer = null;
+        let repeatTimer = null;
+        let isTransitioning = false; // 階層遷移中はtrue（移動を無効化）
+        let ignorePressUntilRelease = false; // 遷移後、指を離すまで押し直しを要求する
+
+        function stopHold() {
+            if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+            if (repeatTimer) { clearInterval(repeatTimer); repeatTimer = null; }
+        }
+
+        function moveByDir(dir) {
+            if (dir === 'up') tryMove(0, -1);
+            else if (dir === 'down') tryMove(0, 1);
+            else if (dir === 'left') tryMove(-1, 0);
+            else if (dir === 'right') tryMove(1, 0);
+        }
+
+        function startHold(dir) {
+            // 遷移処理中や、遷移後に指を離すまでの間は無効化（再押しを促す）
+            if (isTransitioning || ignorePressUntilRelease) return;
+
+            // すぐに1回移動
+            moveByDir(dir);
+
+            // 少し遅延した後に連続移動開始
+            holdTimer = setTimeout(() => {
+                // 再チェック
+                if (isTransitioning) { stopHold(); return; }
+                repeatTimer = setInterval(() => {
+                    if (!isTransitioning) moveByDir(dir);
+                }, 120); // 連打間隔（ms）
+            }, 450); // 長押し開始遅延（ms）
+        }
+
         function tryMove(dx, dy) {
             if (state !== STATE.PLAY) return;
+            if (isTransitioning) return; // 遷移中は無効化
+
             const nx = player.x + dx;
             const ny = player.y + dy;
-            if (nx >= 0 && nx < DUNGEON_W && ny >= 0 && ny < DUNGEON_H) {
-                if (dungeon[ny][nx] !== '#') {
-                    player.x = nx; player.y = ny;
-                    ap -= 1; Audio.move();
-                    if (dungeon[ny][nx] === '+') {
-                        ap = Math.min(MAX_AP, ap + AP_RECOVERY);
-                        dungeon[ny][nx] = '.'; Audio.heal();
-                    }
-                    if (ap <= 0) { changeState(STATE.GAMEOVER); return; }
-                    if (ny === goalPos[0] && nx === goalPos[1]) { Audio.goal(); setTimeout(() => nextLevel(), 180); }
-                }
+            if (nx < 0 || nx >= DUNGEON_W || ny < 0 || ny >= DUNGEON_H) return;
+            if (dungeon[ny][nx] === '#') return;
+
+            // === ゴールへ入る処理（先に判定） ===
+            if (ny === goalPos[0] && nx === goalPos[1]) {
+                // プレイヤーをゴール位置に移動（見た目として）
+                player.x = nx;
+                player.y = ny;
+                ap -= 1;
+                Audio.goal();
+
+                // 長押しを即座に解除して、以降は再押しが必要になるようにする
+                stopHold();
+                ignorePressUntilRelease = true;
+                isTransitioning = true;
+
+                // 少し演出の後に次階へ移行
+                setTimeout(() => {
+                    nextLevel();
+                    // 次階で即動かないようにするため、ignorePressUntilRelease は指が離されるまで true のままにする
+                    isTransitioning = false;
+                }, 250);
+                return; // 突き抜け防止：ここで処理終了
+            }
+
+            // === 通常移動 ===
+            player.x = nx;
+            player.y = ny;
+            ap -= 1;
+            Audio.move();
+
+            if (dungeon[ny][nx] === '+') {
+                ap = Math.min(MAX_AP, ap + AP_RECOVERY);
+                dungeon[ny][nx] = '.';
+                Audio.heal();
+            }
+
+            if (ap <= 0) {
+                changeState(STATE.GAMEOVER);
+                stopHold();
+                return;
             }
         }
 
-        // ====== 入力 ======
+        // ====== 入力（キーボード） ======
         window.addEventListener('keydown', (e) => {
             if (['w', 'W', 'ArrowUp'].includes(e.key)) tryMove(0, -1);
             else if (['s', 'S', 'ArrowDown'].includes(e.key)) tryMove(0, 1);
@@ -243,14 +339,40 @@
             else if (['d', 'D', 'ArrowRight'].includes(e.key)) tryMove(1, 0);
         });
 
+        // ====== 十字UI（pointer イベントを使用） ======
         document.querySelectorAll('.tpbtn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const dir = btn.dataset.dir;
-                if (dir === 'up') tryMove(0, -1);
-                else if (dir === 'down') tryMove(0, 1);
-                else if (dir === 'left') tryMove(-1, 0);
-                else if (dir === 'right') tryMove(1, 0);
+            const dir = btn.dataset.dir;
+
+            // pointerdown で長押し開始（タッチ・マウスともに有効）
+            btn.addEventListener('pointerdown', (e) => {
+                e.preventDefault();
+                // pointerdown が発生しても、遷移後に指を離すまでは反応させない
+                if (ignorePressUntilRelease) return;
+                startHold(dir);
             });
+
+            // pointerup / pointercancel / pointerleave で解除
+            btn.addEventListener('pointerup', () => {
+                stopHold();
+            });
+            btn.addEventListener('pointercancel', () => {
+                stopHold();
+                // pointercancel は指が離れた相当とみなして再開可能にする
+                ignorePressUntilRelease = false;
+            });
+            btn.addEventListener('pointerleave', () => {
+                stopHold();
+            });
+        });
+
+        // グローバルに pointerup を拾って「指を離した」ことを検知 -> 再押し可能にする
+        window.addEventListener('pointerup', () => {
+            stopHold();
+            ignorePressUntilRelease = false;
+        });
+        window.addEventListener('pointercancel', () => {
+            stopHold();
+            ignorePressUntilRelease = false;
         });
 
         // 音量バー
@@ -274,6 +396,10 @@
             player.y = startPos[0]; player.x = startPos[1];
             if (state !== STATE.GAMEOVER) ap = MAX_AP;
             changeState(STATE.PLAY);
+            // 初期化：押しっぱなしガード解除
+            stopHold();
+            ignorePressUntilRelease = false;
+            isTransitioning = false;
         }
 
         function nextLevel() {
@@ -282,6 +408,8 @@
             const gen = generateDungeon(DUNGEON_W, DUNGEON_H, 15, 10, seed);
             dungeon = gen.grid; startPos = gen.start; goalPos = gen.goal;
             player.y = startPos[0]; player.x = startPos[1];
+            // 次階に来た直後は押し直しを要求する（ignore は遷移処理で制御）
+            stopHold();
         }
 
         function resetGame() { level = 1; ap = MAX_AP; }
@@ -331,11 +459,9 @@
                 }
             }
 
-
             // プレイヤー
             const px = VIEW * TILE, py = VIEW * TILE;
             drawText('P', px + TILE / 2, py + TILE / 2, 30, COLORS.RED);
-
 
             // スタート地点
             if (player.y === startPos[0] && player.x === startPos[1]) {
@@ -346,7 +472,6 @@
                 drawText('S', sx + TILE / 2, sy + TILE / 2, 30, COLORS.GREEN);
             }
 
-
             // APバー
             const barW = 150, barH = 20, barX = SCREEN_W - barW - 20, barY = 20;
             drawRect(barX, barY, barW, barH, COLORS.DARK);
@@ -355,17 +480,13 @@
             drawText(`AP: ${ap}/${MAX_AP}`, barX - 70, barY + barH / 2, 16, COLORS.WHITE, 'right');
         }
 
-
         // ====== メインループ ======
         function loop() { render(); requestAnimationFrame(loop); }
         loop();
 
-
         // 初期UI
         function showMenu() { changeState(STATE.MENU); }
         showMenu();
-
-
     </script>
 </body>
 
